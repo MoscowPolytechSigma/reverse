@@ -1,0 +1,80 @@
+{
+    "name": "cpp-asm-viewer",
+    "displayName": "C/C++ Assembly Viewer",
+    "description": "View assembly code for C/C++ files with synchronized highlighting",
+    "version": "1.0.0",
+    "engines": {
+        "vscode": "^1.60.0"
+    },
+    "categories": [
+        "Programming Languages",
+        "Other"
+    ],
+    "activationEvents": [
+        "onLanguage:c",
+        "onLanguage:cpp"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "cpp-asm-viewer.compileToAssembly",
+                "title": "Compile to Assembly",
+                "category": "C++ Assembly Viewer"
+            },
+            {
+                "command": "cpp-asm-viewer.showSettings",
+                "title": "Show Settings",
+                "category": "C++ Assembly Viewer"
+            }
+        ],
+        "menus": {
+            "editor/title": [
+                {
+                    "command": "cpp-asm-viewer.compileToAssembly",
+                    "when": "resourceLangId == cpp || resourceLangId == c",
+                    "group": "navigation"
+                }
+            ]
+        },
+        "configuration": {
+            "title": "C++ Assembly Viewer",
+            "properties": {
+                "cpp-asm-viewer.compilerPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Path to C++ compiler (auto-detected if empty)"
+                },
+                "cpp-asm-viewer.compilerArgs": {
+                    "type": "string",
+                    "default": "/Od /FA /c",
+                    "description": "Compiler arguments"
+                },
+                "cpp-asm-viewer.outputType": {
+                    "type": "string",
+                    "enum": ["asm", "asm+hex", "asm+hex+addr"],
+                    "default": "asm",
+                    "description": "Type of assembly output"
+                }
+            }
+        },
+        "views": {
+            "explorer": [
+                {
+                    "id": "cpp-asm-viewer-settings",
+                    "name": "C++ Assembly Settings"
+                }
+            ]
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.60.0",
+        "@types/node": "16.x",
+        "typescript": "^4.9.4"
+    }
+}
