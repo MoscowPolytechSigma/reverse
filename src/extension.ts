@@ -26,6 +26,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Auto-detect compiler on activation
     compilerManager.autoDetectCompiler();
     
+    // Add all disposables to context
     context.subscriptions.push(
         compileCommand,
         settingsCommand,
@@ -35,4 +36,6 @@ export function activate(context: vscode.ExtensionContext) {
     );
 }
 
-export function deactivate() {}
+export function deactivate() {
+    // VS Code автоматически вызовет dispose() на всех объектах в context.subscriptions
+}
