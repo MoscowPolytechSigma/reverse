@@ -3,10 +3,13 @@ import { CompilerManager } from './compilerManager';
 import { SettingsPanel } from './settingsPanel';
 import { AssemblyViewer } from './assemblyViewer';
 
+// Глобальная ссылка на CompilerManager
+let compilerManager: CompilerManager;
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('C++ Assembly Viewer extension activated');
     
-    const compilerManager = new CompilerManager();
+    compilerManager = new CompilerManager();
     const assemblyViewer = new AssemblyViewer(compilerManager);
     
     // Register commands
@@ -23,6 +26,13 @@ export function activate(context: vscode.ExtensionContext) {
     statusBarItem.command = 'cpp-asm-viewer.compileToAssembly';
     statusBarItem.show();
     
+    // Add settings button to status bar
+    const settingsStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+    settingsStatusBarItem.text = "$(settings) Settings";
+    settingsStatusBarItem.tooltip = "Open C++ Assembly Settings";
+    settingsStatusBarItem.command = 'cpp-asm-viewer.showSettings';
+    settingsStatusBarItem.show();
+    
     // Auto-detect compiler on activation
     compilerManager.autoDetectCompiler();
     
@@ -31,11 +41,17 @@ export function activate(context: vscode.ExtensionContext) {
         compileCommand,
         settingsCommand,
         statusBarItem,
+        settingsStatusBarItem,
         compilerManager,
         assemblyViewer
     );
 }
 
+// Экспортируем функцию для доступа к CompilerManager
+export function getCompilerManager(): CompilerManager {
+    return compilerManager;
+}
+
 export function deactivate() {
-    // VS Code автоматически вызовет dispose() на всех объектах в context.subscriptions
+    // VS Code automatically calls dispose() on all objects in context.subscriptions
 }

@@ -3,6 +3,7 @@
   "displayName": "C/C++ Assembly Viewer",
   "description": "View assembly code for C/C++ files with synchronized highlighting",
   "publisher": "221-331",
+  "icon": "images/icon.png",
   "version": "1.0.0",
   "engines": {
     "vscode": "^1.106.0"
@@ -48,8 +49,8 @@
         },
         "cpp-asm-viewer.compilerArgs": {
           "type": "string",
-          "default": "/Od /FA /c",
-          "description": "Compiler arguments"
+          "default": "/Od /c /Zi",
+          "description": "Compiler arguments (without /FA flags - they are added automatically)"
         },
         "cpp-asm-viewer.outputType": {
           "type": "string",
@@ -67,10 +68,17 @@
       "explorer": [
         {
           "id": "cpp-asm-viewer-settings",
-          "name": "C++ Assembly Settings"
+          "name": "C++ Assembly Settings",
+          "when": "workbenchState != empty"
         }
       ]
-    }
+    },
+    "viewsWelcome": [
+      {
+        "view": "cpp-asm-viewer-settings",
+        "contents": "No settings open. [Open Settings](command:cpp-asm-viewer.showSettings)"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -88,4 +96,5 @@
   "dependencies": {
     "node-fetch": "^2.7.0"
   }
+
 }

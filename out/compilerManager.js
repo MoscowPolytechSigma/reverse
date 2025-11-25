@@ -381,7 +381,7 @@ class CompilerManager {
         });
     }
     getCompilerArgs(sourcePath) {
-        const baseArgs = this.config.get('compilerArgs', '/Od /FAs /c /Zi').split(' ');
+        const baseArgs = this.config.get('compilerArgs', '/Od /c /Zi').split(' ');
         const outputType = this.config.get('outputType', 'asm');
         let args = [...baseArgs];
         if (this.currentCompiler?.type === 'msvc') {
@@ -392,28 +392,26 @@ class CompilerManager {
             if (!args.some(arg => arg.startsWith('/Z'))) {
                 args.push('/Zi'); // Генерация отладочной информации
             }
-            // Убедимся, что используется /FAs (assembly with source)
-            if (!args.includes('/FAs') && !args.includes('/FA') && !args.includes('/FAsc') && !args.includes('/FAscu')) {
-                args.push('/FAs');
-            }
+            // Удаляем все существующие флаги /FA* чтобы избежать конфликтов
+            args = args.filter(arg => !arg.startsWith('/FA'));
+            // Добавляем правильный флаг в зависимости от outputType
             switch (outputType) {
                 case 'asm+hex':
-                    if (!args.includes('/FAsc'))
-                        args.push('/FAsc');
+                    args.push('/FAsc');
                     break;
                 case 'asm+hex+addr':
-                    if (!args.includes('/FAscu'))
-                        args.push('/FAscu');
+                    args.push('/FAscu');
                     break;
-                default:
-                    if (!args.includes('/FAs'))
-                        args.push('/FAs');
+                default: // 'asm'
+                    args.push('/FAs'); // Assembly with source code
             }
             if (!args.some(arg => arg.startsWith('/std:'))) {
                 args.push('/std:c++17');
             }
         }
         else if (this.currentCompiler?.type === 'gcc' || this.currentCompiler?.type === 'clang') {
+            // Удаляем флаги MSVC если они есть
+            args = args.filter(arg => !arg.startsWith('/'));
             args.push('-S', '-fverbose-asm', '-g');
             if (outputType === 'asm+hex' || outputType === 'asm+hex+addr') {
                 args.push('-masm=intel');
@@ -422,6 +420,7 @@ class CompilerManager {
                 args.push('-std=c++17');
             }
         }
+        console.log('Final compiler args:', args);
         return args;
     }
     parseMappings(assembly, sourcePath) {
@@ -533,6 +532,12 @@ class CompilerManager {
     dispose() {
         // Cleanup if needed
         console.log('CompilerManager disposed');
+    }
+    getCurrentCompiler() {
+        return this.currentCompiler;
+    }
+    setCompiler(compiler) {
+        this.currentCompiler = compiler;
     }
 }
 exports.CompilerManager = CompilerManager;

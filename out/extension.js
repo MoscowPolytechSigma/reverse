@@ -23,14 +23,16 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deactivate = exports.activate = void 0;
+exports.deactivate = exports.getCompilerManager = exports.activate = void 0;
 const vscode = __importStar(require("vscode"));
 const compilerManager_1 = require("./compilerManager");
 const settingsPanel_1 = require("./settingsPanel");
 const assemblyViewer_1 = require("./assemblyViewer");
+// Глобальная ссылка на CompilerManager
+let compilerManager;
 function activate(context) {
     console.log('C++ Assembly Viewer extension activated');
-    const compilerManager = new compilerManager_1.CompilerManager();
+    compilerManager = new compilerManager_1.CompilerManager();
     const assemblyViewer = new assemblyViewer_1.AssemblyViewer(compilerManager);
     // Register commands
     const compileCommand = vscode.commands.registerCommand('cpp-asm-viewer.compileToAssembly', () => assemblyViewer.compileCurrentFile());
@@ -41,14 +43,25 @@ function activate(context) {
     statusBarItem.tooltip = "Compile to Assembly";
     statusBarItem.command = 'cpp-asm-viewer.compileToAssembly';
     statusBarItem.show();
+    // Add settings button to status bar
+    const settingsStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+    settingsStatusBarItem.text = "$(settings) Settings";
+    settingsStatusBarItem.tooltip = "Open C++ Assembly Settings";
+    settingsStatusBarItem.command = 'cpp-asm-viewer.showSettings';
+    settingsStatusBarItem.show();
     // Auto-detect compiler on activation
     compilerManager.autoDetectCompiler();
     // Add all disposables to context
-    context.subscriptions.push(compileCommand, settingsCommand, statusBarItem, compilerManager, assemblyViewer);
+    context.subscriptions.push(compileCommand, settingsCommand, statusBarItem, settingsStatusBarItem, compilerManager, assemblyViewer);
 }
 exports.activate = activate;
+// Экспортируем функцию для доступа к CompilerManager
+function getCompilerManager() {
+    return compilerManager;
+}
+exports.getCompilerManager = getCompilerManager;
 function deactivate() {
-    // VS Code автоматически вызовет dispose() на всех объектах в context.subscriptions
+    // VS Code automatically calls dispose() on all objects in context.subscriptions
 }
 exports.deactivate = deactivate;
 //# sourceMappingURL=extension.js.map
