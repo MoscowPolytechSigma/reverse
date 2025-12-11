@@ -24,7 +24,7 @@ export interface LineMapping {
     color: string;
 }
 
-export class CompilerManager {
+export class CompilerManager2 {
     private currentCompiler: CompilerInfo | undefined;
     private config: vscode.WorkspaceConfiguration;
     
@@ -32,50 +32,8 @@ export class CompilerManager {
         this.config = vscode.workspace.getConfiguration('cpp-asm-viewer');
     }
     
-    public async autoDetectCompiler(): Promise<CompilerInfo | undefined> {
-        // Сначала проверяем ручные настройки
-        const selectedCompilerType = this.config.get<string>('selectedCompiler');
-        const manualPath = this.config.get<string>('compilerPath');
-        
-        if (manualPath && fs.existsSync(manualPath)) {
-            // Пытаемся определить тип компилятора по пути
-            const type = this.detectCompilerTypeByPath(manualPath);
-            const version = await this.getCompilerVersion(manualPath, type);
-            
-            this.currentCompiler = {
-                path: manualPath,
-                version: version,
-                type: type
-            };
-            
-            vscode.window.showInformationMessage(`Using manual compiler: ${type} ${version}`);
-            return this.currentCompiler;
-        }
-        
-        // Если выбран конкретный тип компилятора
-        if (selectedCompilerType) {
-            let compiler: CompilerInfo | undefined;
-            
-            switch (selectedCompilerType) {
-                case 'msvc':
-                    compiler = await this.detectMSVC();
-                    break;
-                case 'gcc':
-                    compiler = await this.detectGCC();
-                    break;
-                case 'clang':
-                    compiler = await this.detectClang();
-                    break;
-            }
-            
-            if (compiler) {
-                this.currentCompiler = compiler;
-                vscode.window.showInformationMessage(`Using selected compiler: ${compiler.type} ${compiler.version}`);
-                return compiler;
-            }
-        }
-        
-        // Автодетект по порядку: MSVC -> GCC -> Clang
+    public async autoDetectCompiler2(): Promise<CompilerInfo | undefined> {
+        // Try MSVC first
         const msvc = await this.detectMSVC();
         if (msvc) {
             this.currentCompiler = msvc;
@@ -83,6 +41,7 @@ export class CompilerManager {
             return msvc;
         }
         
+        // Try GCC
         const gcc = await this.detectGCC();
         if (gcc) {
             this.currentCompiler = gcc;
@@ -90,6 +49,7 @@ export class CompilerManager {
             return gcc;
         }
         
+        // Try Clang
         const clang = await this.detectClang();
         if (clang) {
             this.currentCompiler = clang;
@@ -97,42 +57,8 @@ export class CompilerManager {
             return clang;
         }
         
-        vscode.window.showWarningMessage('No C++ compiler found. Please configure manually in settings.');
+        vscode.window.showWarningMessage('No C++ compiler found. Please configure manually.');
         return undefined;
-    }
-    
-    private detectCompilerTypeByPath(compilerPath: string): 'msvc' | 'gcc' | 'clang' {
-        const lowerPath = compilerPath.toLowerCase();
-        
-        if (lowerPath.includes('cl.exe') || lowerPath.includes('msvc')) {
-            return 'msvc';
-        } else if (lowerPath.includes('g++') || lowerPath.includes('gcc') || lowerPath.includes('mingw')) {
-            return 'gcc';
-        } else if (lowerPath.includes('clang++') || lowerPath.includes('clang')) {
-            return 'clang';
-        }
-        
-        // По умолчанию предполагаем MSVC для .exe файлов на Windows
-        return compilerPath.endsWith('.exe') ? 'msvc' : 'gcc';
-    }
-    
-    private async getCompilerVersion(compilerPath: string, type: 'msvc' | 'gcc' | 'clang'): Promise<string> {
-        try {
-            if (type === 'msvc') {
-                return await this.getMSVCVersion(compilerPath);
-            } else {
-                const result = cp.spawnSync(compilerPath, ['--version']);
-                if (result.status === 0 && result.stdout) {
-                    const versionOutput = result.stdout.toString();
-                    const versionMatch = versionOutput.match(/(\d+\.\d+\.\d+)/);
-                    return versionMatch ? versionMatch[1] : 'Unknown';
-                }
-            }
-        } catch (error) {
-            console.error('Error getting compiler version:', error);
-        }
-        
-        return 'Unknown';
     }
     
     private async detectMSVC(): Promise<CompilerInfo | undefined> {
@@ -149,6 +75,7 @@ export class CompilerManager {
             ].filter((p): p is string => p !== undefined && fs.existsSync(p));
             
             for (const basePath of possiblePaths) {
+                // Теперь basePath гарантированно строка и существует
                 const versions = fs.readdirSync(basePath)
                     .filter(dir => {
                         const fullPath = path.join(basePath, dir, 'bin', 'Hostx64', 'x64', 'cl.exe');
@@ -235,7 +162,7 @@ export class CompilerManager {
         });
     }
     
-    public async detectGCC(): Promise<CompilerInfo | undefined> {
+    private async detectGCC(): Promise<CompilerInfo | undefined> {
         try {
             const commands = ['g++', 'gcc', 'x86_64-w64-mingw32-g++', 'x86_64-w64-mingw32-gcc'];
             
@@ -262,7 +189,7 @@ export class CompilerManager {
         return undefined;
     }
     
-    public async detectClang(): Promise<CompilerInfo | undefined> {
+    private async detectClang(): Promise<CompilerInfo | undefined> {
         try {
             const commands = ['clang++', 'clang'];
             
@@ -289,19 +216,20 @@ export class CompilerManager {
         return undefined;
     }
     
-    public async compileToAssembly(sourcePath: string): Promise<CompilationResult> {
+    public async compileToAssembly2(sourcePath: string): Promise<CompilationResult> {
         if (!this.currentCompiler) {
-            const detected = await this.autoDetectCompiler();
+            const detected = await this.autoDetectCompiler2();
             if (!detected) {
                 return {
                     success: false,
-                    error: 'No compiler available. Please configure a C++ compiler in settings.'
+                    error: 'No compiler available. Please configure a C++ compiler.'
                 };
             }
         }
 
         const compiler = this.currentCompiler!;
         
+        // Для MSVC устанавливаем правильное окружение
         if (compiler.type === 'msvc') {
             return await this.compileWithMSVC(compiler, sourcePath);
         } else {
@@ -314,7 +242,7 @@ export class CompilerManager {
         if (!vcvarsallPath) {
             return {
                 success: false,
-                error: 'Cannot find vcvarsall.bat.'
+                error: 'Cannot find vcvarsall.bat. Please make sure Visual Studio is installed correctly.'
             };
         }
 
@@ -326,79 +254,52 @@ export class CompilerManager {
                 const sourceFile = sourcePath.includes(' ') ? `"${sourcePath}"` : sourcePath;
                 const vcvarsall = vcvarsallPath.includes(' ') ? `"${vcvarsallPath}"` : vcvarsallPath;
                 
-                const tempDir = os.tmpdir();
-                const tempAsmFile = path.join(tempDir, `asm_${Date.now()}.asm`);
+                const fullCommand = `chcp 65001 > nul && ${vcvarsall} x64 && ${compilerCommand} ${args.join(' ')} ${sourceFile}`;
                 
-                // Используем /FAcs для генерации ассемблера с машинным кодом и адресами
-                const fullCommand = `chcp 65001 > nul && ${vcvarsall} x64 && ${compilerCommand} ${args.join(' ')} ${sourceFile} /Fa"${tempAsmFile}"`;
-                
-                console.log('Executing MSVC command:', fullCommand);
+                console.log('Executing command:', fullCommand);
                 
                 cp.exec(fullCommand, {
                     cwd: path.dirname(sourcePath),
                     encoding: 'utf8',
                     maxBuffer: 10 * 1024 * 1024
                 }, (error, stdout, stderr) => {
-                    console.log('Compiler completed, checking for assembly output...');
-                    
-                    if (stdout && this.isAssemblyOutput(stdout)) {
-                        console.log('Found assembly output in stdout');
-                        const assembly = this.extractAssemblyFromOutput(stdout);
-                        const mappings = this.parseMappings(assembly, sourcePath);
-                        
-                        resolve({
-                            success: true,
-                            assembly: assembly,
-                            sourceFile: sourcePath,
-                            mappings: mappings
-                        });
-                        return;
-                    }
-                    
-                    if (fs.existsSync(tempAsmFile)) {
-                        try {
-                            let assembly = fs.readFileSync(tempAsmFile, 'utf8');
-                            console.log(`Found assembly file: ${tempAsmFile}, size: ${assembly.length} chars`);
-                            
-                            fs.unlinkSync(tempAsmFile);
-                            
-                            if (assembly.includes('include listing.inc')) {
-                                console.log('File contains include, extracting real assembly...');
-                                assembly = this.extractRealAssembly(assembly);
-                            }
-                            
-                            if (assembly.length > 0) {
-                                const mappings = this.parseMappings(assembly, sourcePath);
-                                resolve({
-                                    success: true,
-                                    assembly: assembly,
-                                    sourceFile: sourcePath,
-                                    mappings: mappings
-                                });
-                            } else {
-                                resolve({
-                                    success: false,
-                                    error: 'Assembly file is empty after processing'
-                                });
-                            }
-                        } catch (readError: any) {
-                            console.error('Error reading temp assembly file:', readError);
-                            resolve({
-                                success: false,
-                                error: `Failed to read assembly file: ${readError.message}`
-                            });
-                        }
-                    } else if (error) {
+                    if (error) {
                         const errorMessage = stderr || stdout || `Compiler exited with code ${error.code}`;
                         resolve({
                             success: false,
                             error: this.fixEncoding(errorMessage)
                         });
                     } else {
-                        resolve({
-                            success: false,
-                            error: `No assembly output found. Command was: ${fullCommand}`
-                        });
+                        const asmFile = sourcePath.replace(/\.(cpp|c)$/, '.asm');
+                        if (fs.existsSync(asmFile)) {
+                            try {
+                                const assembly = fs.readFileSync(asmFile, 'utf8');
+                                console.log('Assembly file content (first 50 lines):');
+                                console.log(assembly.split('\n').slice(0, 50).join('\n'));
+                                
+                                const mappings = this.parseMappings(assembly, sourcePath);
+                                
+                                // НЕ удаляем временные файлы для отладки
+                                // this.cleanupTempFiles(sourcePath);
+                                
+                                resolve({
+                                    success: true,
+                                    assembly: assembly,
+                                    sourceFile: sourcePath,
+                                    mappings: mappings
+                                });
+                            } catch (readError: any) {
+                                resolve({
+                                    success: false,
+                                    error: `Failed to read assembly file: ${readError.message}`
+                                });
+                            }
+                        } else {
+                            resolve({
+                                success: false,
+                                error: `Assembly file not found at: ${asmFile}. Compiler output: ${stdout}${stderr}`
+                            });
+                        }
                     }
                 });
                 
@@ -409,60 +310,6 @@ export class CompilerManager {
                 });
             }
         });
-    }
-
-    private isAssemblyOutput(text: string): boolean {
-        return text.includes('PROC') || 
-            text.includes('ENDP') || 
-            text.includes('mov') || 
-            text.includes('push') || 
-            text.includes('pop') || 
-            text.includes('call') ||
-            text.includes('lea') ||
-            text.includes('add') ||
-            text.includes('sub') ||
-            text.includes('ret');
-    }
-
-    private extractAssemblyFromOutput(output: string): string {
-        const lines = output.split('\n');
-        const assemblyLines: string[] = [];
-        let inAssembly = false;
-        
-        for (const line of lines) {
-            if (line.includes('PROC') || line.includes('_TEXT') || line.includes('CODE')) {
-                inAssembly = true;
-            }
-            
-            if (inAssembly) {
-                assemblyLines.push(line);
-            }
-            
-            if (line.includes('ENDP')) {
-                break;
-            }
-        }
-        
-        return assemblyLines.length > 0 ? assemblyLines.join('\n') : output;
-    }
-
-    private extractRealAssembly(assembly: string): string {
-        const lines = assembly.split('\n');
-        const realLines: string[] = [];
-        
-        for (const line of lines) {
-            if (line.trim().startsWith('include')) {
-                continue;
-            }
-            
-            if (line.trim().startsWith('INCLUDELIB')) {
-                continue;
-            }
-            
-            realLines.push(line);
-        }
-        
-        return realLines.join('\n');
     }
 
     private async findVcvarsall(): Promise<string | undefined> {
@@ -535,161 +382,11 @@ export class CompilerManager {
         });
     }
 
-    private getCompilerArgs(sourcePath: string): string[] {
-        const baseArgs = this.config.get<string>('compilerArgs', '/Od /FAcs /c /EHsc').split(' ');
-
-        let args = [...baseArgs];
-
-        if (this.currentCompiler?.type === 'msvc') {
-            console.log('MSVC compiler detected');
-
-            // Очищаем от старых флагов /FA
-            args = args.filter(arg => !arg.startsWith('/FA'));
-
-            // Базовые флаги
-            if (!args.includes('/nologo')) {
-                args.unshift('/nologo');
-            }
-
-            if (!args.includes('/Od')) {
-                args.push('/Od');
-            }
-
-            if (!args.includes('/c')) {
-                args.push('/c');
-            }
-
-            // Всегда используем /FAcs для MSVC (ассемблер с машинным кодом и адресами)
-            console.log('Using /FAcs flag for assembly with machine code and addresses');
-            args.push('/FAcs');
-
-            if (!args.some(arg => arg.startsWith('/std:'))) {
-                args.push('/std:c++17');
-            }
-
-            console.log('Final MSVC arguments:', args.join(' '));
-
-        } else if (this.currentCompiler?.type === 'gcc' || this.currentCompiler?.type === 'clang') {
-            // Для GCC/Clang используем флаги для подробного ассемблера
-            args = args.filter(arg => !arg.startsWith('/')); // Убираем MSVC флаги
-            
-            args.push('-S', '-fverbose-asm', '-masm=intel', '-fno-asynchronous-unwind-tables');
-
-            if (!args.some(arg => arg.startsWith('-std='))) {
-                args.push('-std=c++17');
-            }
-
-            console.log('Final GCC/Clang arguments:', args.join(' '));
-        }
-
-        return args;
-    }
-    
-    private parseMappings(assembly: string, sourcePath: string): LineMapping[] {
-        // ... существующий код parseMappings ...
-        const mappings: LineMapping[] = [];
-        const lines = assembly.split('\n');
-        const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F'];
-        
-        console.log('Parsing mappings from assembly, total lines:', lines.length);
-        
-        let currentSourceLine = -1;
-        let assemblyLines: number[] = [];
-        let colorIndex = 0;
-        
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            
-            const sourceLineMatch = line.match(/;\s*(\d+)\s*:/);
-            
-            if (sourceLineMatch) {
-                const lineNumber = parseInt(sourceLineMatch[1]);
-                
-                if (currentSourceLine > 0 && assemblyLines.length > 0) {
-                    mappings.push({
-                        sourceLine: currentSourceLine,
-                        assemblyLines: [...assemblyLines],
-                        color: colors[colorIndex % colors.length]
-                    });
-                    console.log(`Mapping: source ${currentSourceLine} -> assembly lines ${assemblyLines.join(',')}`);
-                    colorIndex++;
-                }
-                
-                currentSourceLine = lineNumber;
-                assemblyLines = [i + 1];
-                console.log(`Found source line ${lineNumber} at assembly line ${i + 1}`);
-            } 
-            else if (line.match(/\.LINE\s+(\d+)/i)) {
-                const lineMatch = line.match(/\.LINE\s+(\d+)/i);
-                if (lineMatch) {
-                    const lineNumber = parseInt(lineMatch[1]);
-                    
-                    if (currentSourceLine > 0 && assemblyLines.length > 0) {
-                        mappings.push({
-                            sourceLine: currentSourceLine,
-                            assemblyLines: [...assemblyLines],
-                            color: colors[colorIndex % colors.length]
-                        });
-                        console.log(`Mapping from .LINE: source ${currentSourceLine} -> assembly lines ${assemblyLines.join(',')}`);
-                        colorIndex++;
-                    }
-                    
-                    currentSourceLine = lineNumber;
-                    assemblyLines = [i + 1];
-                    console.log(`Found .LINE directive: source ${lineNumber} at assembly line ${i + 1}`);
-                }
-            }
-            else if (currentSourceLine > 0) {
-                const isAssemblyInstruction = 
-                    line.length > 0 &&
-                    !line.trim().startsWith(';') &&
-                    !line.trim().startsWith('.') &&
-                    !line.trim().startsWith('#') &&
-                    !line.includes('ORG') &&
-                    !line.includes('ALIGN') &&
-                    (line.includes('\t') || line.includes(' ') || /^[0-9A-F]+\s+[0-9A-F]/.test(line));
-                
-                if (isAssemblyInstruction) {
-                    assemblyLines.push(i + 1);
-                }
-            }
-        }
-        
-        if (currentSourceLine > 0 && assemblyLines.length > 0) {
-            mappings.push({
-                sourceLine: currentSourceLine,
-                assemblyLines: [...assemblyLines],
-                color: colors[colorIndex % colors.length]
-            });
-            console.log(`Final mapping: source ${currentSourceLine} -> assembly lines ${assemblyLines.join(',')}`);
-        }
-        
-        console.log(`Total mappings found: ${mappings.length}`);
-        
-        if (mappings.length === 0) {
-            console.log('No mappings found in actual assembly');
-            
-            let hasRealAssembly = false;
-            for (const line of lines) {
-                if (line.includes('PROC') || line.includes('mov') || line.includes('push') || line.includes('call')) {
-                    hasRealAssembly = true;
-                    console.log('Found real assembly instruction:', line.substring(0, 100));
-                    break;
-                }
-            }
-            
-            if (!hasRealAssembly) {
-                console.log('WARNING: No real assembly code found in output!');
-            }
-            
-            return this.createTestMappings(lines.length);
-        }
-        
-        return mappings;
-    }
-
+    // Функция для исправления проблем с кодировкой
     private fixEncoding(text: string): string {
+        // Пытаемся исправить русский текст в разных кодировках
         try {
+            // Если текст в CP866 (стандартная кодировка Windows консоли)
             const buffer = Buffer.from(text, 'binary');
             return buffer.toString('utf8');
         } catch {
@@ -697,12 +394,183 @@ export class CompilerManager {
         }
     }
 
+    // Очистка временных файлов
+    private cleanupTempFiles(sourcePath: string): void {
+        const baseName = sourcePath.replace(/\.(cpp|c)$/, '');
+        const filesToClean = [
+            `${baseName}.asm`,
+            `${baseName}.obj`,
+            `${baseName}.exe`
+        ];
+        
+        filesToClean.forEach(file => {
+            if (fs.existsSync(file)) {
+                try {
+                    fs.unlinkSync(file);
+                } catch {
+                    // Игнорируем ошибки удаления
+                }
+            }
+        });
+    }
+    
+    private getCompilerArgs(sourcePath: string): string[] {
+        const baseArgs = this.config.get<string>('compilerArgs', '/Od /c /Zi').split(' ');
+        const outputType = this.config.get<string>('outputType', 'asm');
+
+        let args = [...baseArgs];
+
+        if (this.currentCompiler?.type === 'msvc') {
+            if (!args.includes('/nologo')) {
+                args.unshift('/nologo');
+            }
+
+            // Убедимся, что есть флаги для отладочной информации
+            if (!args.some(arg => arg.startsWith('/Z'))) {
+                args.push('/Zi'); // Генерация отладочной информации
+            }
+
+            // Удаляем все существующие флаги /FA* чтобы избежать конфликтов
+            args = args.filter(arg => !arg.startsWith('/FA'));
+
+            // Добавляем правильный флаг в зависимости от outputType
+            switch (outputType) {
+                case 'asm+hex':
+                    args.push('/FAsc');
+                    break;
+                case 'asm+hex+addr':
+                    args.push('/FAscu');
+                    break;
+                default: // 'asm'
+                    args.push('/FAs'); // Assembly with source code
+            }
+
+            if (!args.some(arg => arg.startsWith('/std:'))) {
+                args.push('/std:c++17');
+            }
+
+        } else if (this.currentCompiler?.type === 'gcc' || this.currentCompiler?.type === 'clang') {
+            // Удаляем флаги MSVC если они есть
+            args = args.filter(arg => !arg.startsWith('/'));
+
+            args.push('-S', '-fverbose-asm', '-g');
+            if (outputType === 'asm+hex' || outputType === 'asm+hex+addr') {
+                args.push('-masm=intel');
+            }
+
+            if (!args.some(arg => arg.startsWith('-std='))) {
+                args.push('-std=c++17');
+            }
+        }
+
+        console.log('Final compiler args:', args);
+        return args;
+    }
+    
+    private parseMappings(assembly: string, sourcePath: string): LineMapping[] {
+        const mappings: LineMapping[] = [];
+        const lines = assembly.split('\n');
+        const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F'];
+        
+        console.log('Starting to parse mappings from assembly code');
+        console.log('Total assembly lines:', lines.length);
+        
+        let currentSourceLine = -1;
+        let assemblyLines: number[] = [];
+        let colorIndex = 0;
+
+        // Получаем только имя файла для поиска в комментариях
+        const sourceFileName = path.basename(sourcePath);
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            
+            // Пытаемся найти разные форматы маппингов:
+
+            // 1. MSVC с исходным кодом: "; 15   : int x = 5;"
+            const msvcSourceMatch = line.match(/;(\s+)(\d+)(\s+):/);
+            
+            // 2. MSVC с именем файла: "; File: d:\path\file.cpp"
+            const msvcFileMatch = line.match(/; File:\s*(.+)/);
+            
+            // 3. MSVC номер строки: "; Line 15"
+            const msvcLineMatch = line.match(/; Line\s+(\d+)/i);
+            
+            // 4. GCC/Clang формат: "#15 \"file.cpp\""
+            const gccMatch = line.match(/#\s*(\d+)\s*"/);
+
+            let lineNumber = -1;
+
+            if (msvcSourceMatch) {
+                lineNumber = parseInt(msvcSourceMatch[2]);
+                console.log(`Found MSVC source mapping: line ${lineNumber} at assembly line ${i + 1}`);
+            } else if (msvcLineMatch) {
+                lineNumber = parseInt(msvcLineMatch[1]);
+                console.log(`Found MSVC line directive: line ${lineNumber} at assembly line ${i + 1}`);
+            } else if (gccMatch) {
+                lineNumber = parseInt(gccMatch[1]);
+                console.log(`Found GCC mapping: line ${lineNumber} at assembly line ${i + 1}`);
+            }
+
+            if (lineNumber > 0) {
+                // Сохраняем предыдущий маппинг
+                if (currentSourceLine > 0 && assemblyLines.length > 0) {
+                    mappings.push({
+                        sourceLine: currentSourceLine,
+                        assemblyLines: [...assemblyLines],
+                        color: colors[colorIndex % colors.length]
+                    });
+                    console.log(`Saved mapping: ${currentSourceLine} -> ${assemblyLines.join(',')}`);
+                    colorIndex++;
+                }
+                
+                // Начинаем новый маппинг
+                currentSourceLine = lineNumber;
+                assemblyLines = [i + 1];
+            } else if (currentSourceLine > 0) {
+                // Если это не комментарий и не директива, добавляем к текущему маппингу
+                if (line && 
+                    !line.startsWith(';') && 
+                    !line.startsWith('#') && 
+                    !line.startsWith('.') &&
+                    !line.includes('@eh') &&
+                    !line.includes('DEBUG') &&
+                    !line.startsWith('//')) {
+                    assemblyLines.push(i + 1);
+                }
+            }
+        }
+
+        // Добавляем последний маппинг
+        if (currentSourceLine > 0 && assemblyLines.length > 0) {
+            mappings.push({
+                sourceLine: currentSourceLine,
+                assemblyLines: [...assemblyLines],
+                color: colors[colorIndex % colors.length]
+            });
+            console.log(`Final mapping: ${currentSourceLine} -> ${assemblyLines.join(',')}`);
+        }
+
+        console.log(`Total mappings found: ${mappings.length}`);
+        
+        // Если маппингов нет, создаем тестовые
+        if (mappings.length === 0) {
+            console.log('No mappings found, creating test mappings');
+            return this.createTestMappings(lines.length);
+        }
+        
+        return mappings;
+    }
+
+    // Временный метод для создания тестовых маппингов
     private createTestMappings(assemblyLineCount: number): LineMapping[] {
         const mappings: LineMapping[] = [];
         const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4'];
         
+        // Создаем искусственные маппинги для тестирования
         for (let i = 1; i <= 10; i++) {
             const assemblyLines: number[] = [];
+            // Каждой строке C++ ставим в соответствие 3-5 строк ассемблера
             for (let j = 0; j < 3 + (i % 3); j++) {
                 const asmLine = (i * 5 + j) % assemblyLineCount;
                 if (asmLine > 0 && asmLine <= assemblyLineCount) {
@@ -723,15 +591,19 @@ export class CompilerManager {
         return mappings;
     }
 
+    // Добавляем метод dispose для совместимости с VS Code API
+    public dispose(): void {
+        // Cleanup if needed
+        console.log('CompilerManager disposed');
+    }
+
     public getCurrentCompiler(): CompilerInfo | undefined {
-        return this.currentCompiler;
+    return this.currentCompiler;
     }
 
     public setCompiler(compiler: CompilerInfo) {
         this.currentCompiler = compiler;
     }
 
-    public dispose(): void {
-        console.log('CompilerManager disposed');
-    }
 }
+

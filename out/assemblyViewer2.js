@@ -23,14 +23,18 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AssemblyViewer = void 0;
+exports.AssemblyViewer2 = void 0;
 const vscode = __importStar(require("vscode"));
-class AssemblyViewer {
-    constructor(compilerManager) {
+class AssemblyViewer2 {
+    constructor(compilerManager2) {
         this.isScrolling = false;
         this.disposables = [];
         this.currentMappings = [];
-        this.compilerManager = compilerManager;
+        // Удаляем статические декорации и их цвета
+        this.temporaryDecorations = [];
+        this.lastHighlightedSourceLine = -1;
+        this.lastHighlightedAssemblyLines = [];
+        this.compilerManager2 = compilerManager2;
     }
     async compileCurrentFile() {
         const editor = vscode.window.activeTextEditor;
@@ -43,20 +47,15 @@ class AssemblyViewer {
             vscode.window.showWarningMessage('Only C/C++ files are supported');
             return;
         }
+        // Сохраняем URI исходного документа
         this.sourceDocumentUri = document.uri;
         this.sourceEditor = editor;
         // Очищаем предыдущее состояние
         this.dispose();
         console.log('Starting compilation...');
         try {
-            const result = await this.compilerManager.compileToAssembly(document.fileName);
+            const result = await this.compilerManager2.compileToAssembly2(document.fileName);
             if (result.success && result.assembly) {
-                // Выводим первые 50 строк для проверки формата
-                console.log('First 50 lines of assembly output:');
-                const lines = result.assembly.split('\n');
-                for (let i = 0; i < Math.min(50, lines.length); i++) {
-                    console.log(`${i + 1}: ${lines[i]}`);
-                }
                 await this.showAssembly(result);
                 vscode.window.showInformationMessage('Compilation successful');
             }
@@ -82,25 +81,6 @@ class AssemblyViewer {
             preview: false
         });
         console.log('Assembly document opened successfully');
-        // Следим за закрытием редактора ассемблера
-        this.assemblyEditorDisposable = vscode.workspace.onDidCloseTextDocument((closedDoc) => {
-            if (closedDoc === this.assemblyEditor?.document) {
-                console.log('Assembly editor closed, cleaning up highlights');
-                this.cleanupHighlights();
-                this.assemblyEditor = undefined;
-                this.assemblyEditorDisposable?.dispose();
-            }
-        });
-        // Также следим за изменением видимых редакторов
-        this.visibleEditorsDisposable = vscode.window.onDidChangeVisibleTextEditors((editors) => {
-            const isAssemblyEditorVisible = editors.some(editor => editor === this.assemblyEditor);
-            if (!isAssemblyEditorVisible && this.assemblyEditor) {
-                console.log('Assembly editor is no longer visible, cleaning up highlights');
-                this.cleanupHighlights();
-                this.assemblyEditor = undefined;
-            }
-        });
-        this.disposables.push(this.assemblyEditorDisposable, this.visibleEditorsDisposable);
         // Восстанавливаем исходный редактор
         await this.restoreSourceEditor();
         // Сохраняем маппинги
@@ -142,11 +122,22 @@ class AssemblyViewer {
             console.error('Editors are not valid after initialization');
             return;
         }
+        // Слушаем закрытие редактора ассемблера
+        const closeDisposable = vscode.window.onDidChangeVisibleTextEditors((editors) => {
+            if (!this.assemblyEditor)
+                return;
+            const isAssemblyEditorOpen = editors.some(editor => editor === this.assemblyEditor);
+            if (!isAssemblyEditorOpen) {
+                console.log('Assembly editor was closed, cleaning up highlights');
+                this.clearAllTemporaryHighlights();
+            }
+        });
+        this.disposables.push(closeDisposable);
         // Даем время редакторам полностью инициализироваться
         setTimeout(() => {
             this.setupSyncScrolling();
             console.log('Editors initialized successfully');
-        }, 300);
+        }, 500);
     }
     setupSyncScrolling() {
         if (!this.sourceEditor || !this.assemblyEditor) {
@@ -161,6 +152,7 @@ class AssemblyViewer {
             if (event.textEditor === this.sourceEditor && event.selections.length > 0) {
                 const line = event.selections[0].active.line + 1;
                 console.log(`Source selection: line ${line}`);
+                this.clearAllTemporaryHighlights();
                 this.syncScrollToAssembly(line);
                 this.highlightCorrespondingAssembly(line);
             }
@@ -172,6 +164,7 @@ class AssemblyViewer {
             if (event.textEditor === this.assemblyEditor && event.selections.length > 0) {
                 const line = event.selections[0].active.line + 1;
                 console.log(`Assembly selection: line ${line}`);
+                this.clearAllTemporaryHighlights();
                 this.syncScrollToSource(line);
                 this.highlightCorrespondingSource(line);
             }
@@ -221,75 +214,50 @@ class AssemblyViewer {
     highlightCorrespondingAssembly(sourceLine) {
         const mapping = this.findMappingBySourceLine(sourceLine);
         if (mapping && this.assemblyEditor) {
-            // Очищаем предыдущие выделения
-            this.cleanupHighlights();
-            // Подсвечиваем строки ассемблера на всю ширину
-            this.highlightAssemblyLines(mapping.assemblyLines, mapping.color);
+            this.createTemporaryHighlight(this.assemblyEditor, mapping.assemblyLines, mapping.color);
+            this.lastHighlightedAssemblyLines = mapping.assemblyLines;
             console.log(`Highlighting assembly lines: ${mapping.assemblyLines.join(', ')}`);
         }
     }
     highlightCorrespondingSource(assemblyLine) {
         const mapping = this.findMappingByAssemblyLine(assemblyLine);
         if (mapping && this.sourceEditor) {
-            // Очищаем предыдущие выделения
-            this.cleanupHighlights();
-            // Подсвечиваем строку исходного кода на всю ширину
-            this.highlightSourceLine(mapping.sourceLine, mapping.color);
+            // Подсвечиваем строку исходного кода
+            this.createTemporaryHighlight(this.sourceEditor, [mapping.sourceLine], mapping.color);
+            this.lastHighlightedSourceLine = mapping.sourceLine;
             // Подсвечиваем весь блок ассемблера
             if (this.assemblyEditor) {
-                this.highlightAssemblyLines(mapping.assemblyLines, mapping.color);
+                this.createTemporaryHighlight(this.assemblyEditor, mapping.assemblyLines, mapping.color);
+                this.lastHighlightedAssemblyLines = mapping.assemblyLines;
             }
             console.log(`Highlighting source line ${mapping.sourceLine} and assembly lines: ${mapping.assemblyLines.join(', ')}`);
         }
     }
-    highlightSourceLine(line, color) {
-        if (!this.sourceEditor)
-            return;
-        // Очищаем предыдущее выделение
-        if (this.activeSourceHighlight) {
-            this.activeSourceHighlight.dispose();
-        }
-        // Подсветка всей строки - используем большую ширину
-        const range = new vscode.Range(new vscode.Position(line - 1, 0), new vscode.Position(line - 1, 10000) // Достаточно большая ширина
-        );
-        this.activeSourceHighlight = vscode.window.createTextEditorDecorationType({
-            backgroundColor: `${color}20`,
+    createTemporaryHighlight(editor, lines, color) {
+        const ranges = lines.map(line => {
+            // Получаем весь текст строки, чтобы узнать её длину
+            const lineText = editor.document.lineAt(line - 1).text;
+            const maxColumn = Math.max(lineText.length, 100); // Минимум 100 символов ширины
+            return new vscode.Range(new vscode.Position(line - 1, 0), new vscode.Position(line - 1, maxColumn));
+        });
+        const decoration = vscode.window.createTextEditorDecorationType({
+            backgroundColor: `${color}40`,
             border: `2px solid ${color}`,
-            borderStyle: 'solid',
+            borderRadius: '3px',
             overviewRulerColor: color,
             overviewRulerLane: vscode.OverviewRulerLane.Right,
-            isWholeLine: true // Ключевое свойство - подсвечиваем всю строку
+            isWholeLine: true // Это ключевое свойство - подсвечиваем всю строку
         });
-        this.sourceEditor.setDecorations(this.activeSourceHighlight, [range]);
+        editor.setDecorations(decoration, ranges);
+        this.temporaryDecorations.push(decoration);
     }
-    highlightAssemblyLines(lines, color) {
-        if (!this.assemblyEditor)
-            return;
-        // Очищаем предыдущее выделение
-        if (this.activeAssemblyHighlight) {
-            this.activeAssemblyHighlight.dispose();
-        }
-        const ranges = lines.map(line => new vscode.Range(new vscode.Position(line - 1, 0), new vscode.Position(line - 1, 10000) // Достаточно большая ширина
-        ));
-        this.activeAssemblyHighlight = vscode.window.createTextEditorDecorationType({
-            backgroundColor: `${color}20`,
-            border: `2px solid ${color}`,
-            borderStyle: 'solid',
-            overviewRulerColor: color,
-            overviewRulerLane: vscode.OverviewRulerLane.Right,
-            isWholeLine: true // Ключевое свойство - подсвечиваем всю строку
+    clearAllTemporaryHighlights() {
+        this.temporaryDecorations.forEach(decoration => {
+            decoration.dispose();
         });
-        this.assemblyEditor.setDecorations(this.activeAssemblyHighlight, ranges);
-    }
-    cleanupHighlights() {
-        if (this.activeSourceHighlight) {
-            this.activeSourceHighlight.dispose();
-            this.activeSourceHighlight = undefined;
-        }
-        if (this.activeAssemblyHighlight) {
-            this.activeAssemblyHighlight.dispose();
-            this.activeAssemblyHighlight = undefined;
-        }
+        this.temporaryDecorations = [];
+        this.lastHighlightedSourceLine = -1;
+        this.lastHighlightedAssemblyLines = [];
     }
     findMappingBySourceLine(sourceLine) {
         return this.currentMappings.find(mapping => mapping.sourceLine === sourceLine);
@@ -299,16 +267,15 @@ class AssemblyViewer {
     }
     dispose() {
         console.log('Disposing AssemblyViewer resources');
-        this.cleanupHighlights();
+        this.clearAllTemporaryHighlights();
         this.disposables.forEach(disposable => disposable.dispose());
         this.disposables = [];
-        this.assemblyEditorDisposable?.dispose();
-        this.visibleEditorsDisposable?.dispose();
         this.sourceEditor = undefined;
         this.assemblyEditor = undefined;
         this.currentMappings = [];
         this.isScrolling = false;
+        // Не очищаем sourceDocumentUri, чтобы можно было восстановить
     }
 }
-exports.AssemblyViewer = AssemblyViewer;
-//# sourceMappingURL=assemblyViewer.js.map
+exports.AssemblyViewer2 = AssemblyViewer2;
+//# sourceMappingURL=assemblyViewer2.js.map

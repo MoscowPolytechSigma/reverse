@@ -4,7 +4,7 @@
   "description": "View assembly code for C/C++ files with synchronized highlighting",
   "publisher": "221-331",
   "icon": "images/icon.png",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "engines": {
     "vscode": "^1.106.0"
   },
@@ -21,7 +21,12 @@
     "commands": [
       {
         "command": "cpp-asm-viewer.compileToAssembly",
-        "title": "Compile to Assembly",
+        "title": "Compile to Assembly with ASM + машинные команды + адреса (/FAcs)",
+        "category": "C++ Assembly Viewer"
+      },
+      {
+        "command": "cpp-asm-viewer.compileAsmFAc",
+        "title": "Compile to Assembly (ASM /FAc)",
         "category": "C++ Assembly Viewer"
       },
       {
@@ -34,6 +39,11 @@
       "editor/title": [
         {
           "command": "cpp-asm-viewer.compileToAssembly",
+          "when": "resourceLangId == cpp || resourceLangId == c",
+          "group": "navigation"
+        },
+        {
+          "command": "cpp-asm-viewer.compileToAssemblyAsmFAc",
           "when": "resourceLangId == cpp || resourceLangId == c",
           "group": "navigation"
         }
@@ -54,13 +64,9 @@
         },
         "cpp-asm-viewer.outputType": {
           "type": "string",
-          "enum": [
-            "asm",
-            "asm+hex",
-            "asm+hex+addr"
-          ],
+          "enum": ["asm", "asm+hex+addr"],
           "default": "asm",
-          "description": "Type of assembly output"
+          "description": "Type of assembly output: asm - assembly only, asm+hex+addr - assembly + machine code + addresses"
         }
       }
     },
@@ -90,11 +96,16 @@
     "@types/vscode": "^1.106.1",
     "typescript": "^4.9.5"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "cpp",
+    "assembly",
+    "compiler",
+    "disassembly",
+    "debug"
+  ],
+  "author": "221-331",
   "license": "ISC",
   "dependencies": {
     "node-fetch": "^2.7.0"
   }
-
 }

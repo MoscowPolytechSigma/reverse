@@ -1,6 +1,4 @@
 import * as vscode from 'vscode';
-import { getCompilerManager } from './extension';
-import { CompilerInfo } from './compilerManager';
 
 export class SettingsPanel {
     public static currentPanel: SettingsPanel | undefined;
@@ -24,9 +22,7 @@ export class SettingsPanel {
             column || vscode.ViewColumn.One,
             {
                 enableScripts: true,
-                localResourceRoots: [
-                    vscode.Uri.joinPath(extensionUri, 'media')
-                ]
+                retainContextWhenHidden: true
             }
         );
 
@@ -47,14 +43,11 @@ export class SettingsPanel {
                     case 'updateSettings':
                         await this.updateSettings(data.settings);
                         return;
-                    case 'detectCompiler':
-                        await this.detectCompiler();
-                        return;
-                    case 'resetToDefault':
-                        await this.resetToDefault();
-                        return;
                     case 'getCurrentSettings':
                         await this.sendCurrentSettings();
+                        return;
+                    case 'detectCompilers':
+                        await this.detectAndSendCompilers();
                         return;
                 }
             },
@@ -63,76 +56,85 @@ export class SettingsPanel {
         );
     }
 
+    private async detectAndSendCompilers() {
+        // Импортируем CompilerManager
+        const { CompilerManager } = await import('./compilerManager');
+        const compilerManager = new CompilerManager();
+        
+        const compilers = [];
+        
+        // Проверяем MSVC
+        const msvc = await compilerManager['detectMSVC']();
+        if (msvc) {
+            compilers.push({
+                type: msvc.type,
+                version: msvc.version,
+                path: msvc.path,
+                displayName: `MSVC ${msvc.version} (${msvc.path})`
+            });
+        }
+        
+        // Проверяем GCC
+        const gcc = await compilerManager['detectGCC']();
+        if (gcc) {
+            compilers.push({
+                type: gcc.type,
+                version: gcc.version,
+                path: gcc.path,
+                displayName: `GCC ${gcc.version} (${gcc.path})`
+            });
+        }
+        
+        // Проверяем Clang
+        const clang = await compilerManager['detectClang']();
+        if (clang) {
+            compilers.push({
+                type: clang.type,
+                version: clang.version,
+                path: clang.path,
+                displayName: `Clang ${clang.version} (${clang.path})`
+            });
+        }
+
+        this._panel.webview.postMessage({
+            type: 'availableCompilers',
+            compilers: compilers
+        });
+    }
+
     private async updateSettings(settings: any) {
         const config = vscode.workspace.getConfiguration('cpp-asm-viewer');
-        const compilerManager = getCompilerManager();
         
-        if (settings.compilerPath !== undefined) {
-            await config.update('compilerPath', settings.compilerPath, vscode.ConfigurationTarget.Global);
-        }
-        
-        if (settings.compilerArgs !== undefined) {
-            await config.update('compilerArgs', settings.compilerArgs, vscode.ConfigurationTarget.Global);
-        }
-        
-        if (settings.outputType !== undefined) {
-            await config.update('outputType', settings.outputType, vscode.ConfigurationTarget.Global);
-        }
-
-        // Обновляем компилятор в менеджере
-        if (settings.compilerPath) {
-            const currentCompiler = compilerManager.getCurrentCompiler();
-            if (currentCompiler) {
-                compilerManager.setCompiler({
-                    ...currentCompiler,
-                    path: settings.compilerPath
-                });
+        try {
+            if (settings.compilerArgs !== undefined) {
+                await config.update('compilerArgs', settings.compilerArgs, vscode.ConfigurationTarget.Global);
             }
+            
+            if (settings.selectedCompiler !== undefined) {
+                await config.update('selectedCompiler', settings.selectedCompiler, vscode.ConfigurationTarget.Global);
+            }
+
+            if (settings.compilerPath !== undefined) {
+                await config.update('compilerPath', settings.compilerPath, vscode.ConfigurationTarget.Global);
+            }
+
+            vscode.window.showInformationMessage('Settings saved successfully');
+            
+            // Отправляем обновленные настройки обратно
+            this.sendCurrentSettings();
+        } catch (error) {
+            console.error('Error saving settings:', error);
+            vscode.window.showErrorMessage('Failed to save settings');
         }
-
-        vscode.window.showInformationMessage('Settings updated successfully');
-        
-        // Отправляем обновленные настройки обратно в webview
-        this.sendCurrentSettings();
-    }
-
-    private async detectCompiler() {
-        const compilerManager = getCompilerManager();
-        const detectedCompiler = await compilerManager.autoDetectCompiler();
-        if (detectedCompiler) {
-            this._panel.webview.postMessage({
-                type: 'compilerDetected',
-                compiler: detectedCompiler
-            });
-        } else {
-            this._panel.webview.postMessage({
-                type: 'compilerDetectionFailed'
-            });
-        }
-    }
-
-    private async resetToDefault() {
-        const config = vscode.workspace.getConfiguration('cpp-asm-viewer');
-        
-        await config.update('compilerPath', undefined, vscode.ConfigurationTarget.Global);
-        await config.update('compilerArgs', '/Od /c /Zi', vscode.ConfigurationTarget.Global); // Обновлено
-        await config.update('outputType', 'asm', vscode.ConfigurationTarget.Global);
-
-        vscode.window.showInformationMessage('Settings reset to default');
-        
-        this.sendCurrentSettings();
     }
 
     private async sendCurrentSettings() {
         const config = vscode.workspace.getConfiguration('cpp-asm-viewer');
-        const compilerManager = getCompilerManager();
-        const currentCompiler = compilerManager.getCurrentCompiler();
         
         const settings = {
-            compilerPath: config.get<string>('compilerPath') || '',
-            compilerArgs: config.get<string>('compilerArgs') || '/Od /FA /c',
-            outputType: config.get<string>('outputType') || 'asm',
-            currentCompiler: currentCompiler
+            compilerArgs: config.get<string>('compilerArgs') || '/Od /FAcs /c /EHsc',
+            selectedCompiler: config.get<string>('selectedCompiler') || '',
+            compilerPath: config.get<string>('compilerPath') || ''
         };
 
         this._panel.webview.postMessage({
@@ -155,16 +157,16 @@ export class SettingsPanel {
     }
 
     private _update() {
-        const webview = this._panel.webview;
-        this._panel.webview.html = this._getHtmlForWebview(webview);
+        this._panel.webview.html = this._getHtmlForWebview();
         
         // Отправляем текущие настройки после загрузки
         setTimeout(() => {
             this.sendCurrentSettings();
+            this.detectAndSendCompilers();
         }, 100);
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview): string {
+    private _getHtmlForWebview(): string {
         return `
             <!DOCTYPE html>
             <html lang="en">
@@ -202,7 +204,7 @@ export class SettingsPanel {
                         font-weight: 600;
                     }
                     
-                    input, select, textarea {
+                    textarea, select, input {
                         width: 100%;
                         padding: 8px;
                         background-color: var(--vscode-input-background);
@@ -213,9 +215,10 @@ export class SettingsPanel {
                     }
                     
                     textarea {
-                        min-height: 60px;
+                        min-height: 80px;
                         resize: vertical;
                         font-family: var(--vscode-editor-font-family);
+                        font-size: 0.9em;
                     }
                     
                     button {
@@ -233,15 +236,6 @@ export class SettingsPanel {
                         background-color: var(--vscode-button-hover-background);
                     }
                     
-                    button.secondary {
-                        background-color: var(--vscode-button-secondaryBackground);
-                        color: var(--vscode-button-secondaryForeground);
-                    }
-                    
-                    button.secondary:hover {
-                        background-color: var(--vscode-button-secondaryHoverBackground);
-                    }
-                    
                     .button-group {
                         margin-top: 20px;
                         display: flex;
@@ -252,9 +246,10 @@ export class SettingsPanel {
                     .info {
                         background-color: var(--vscode-textBlockQuote-background);
                         border-left: 4px solid var(--vscode-textBlockQuote-border);
-                        padding: 10px;
-                        margin: 10px 0;
-                        font-size: 0.9em;
+                        padding: 8px 12px;
+                        margin: 8px 0;
+                        font-size: 0.85em;
+                        line-height: 1.4;
                     }
                     
                     .status {
@@ -262,6 +257,11 @@ export class SettingsPanel {
                         margin: 10px 0;
                         border-radius: 2px;
                         font-size: 0.9em;
+                        display: none;
+                    }
+                    
+                    .status.show {
+                        display: block;
                     }
                     
                     .status.success {
@@ -269,49 +269,61 @@ export class SettingsPanel {
                         border: 1px solid var(--vscode-inputValidation-infoBorder);
                     }
                     
-                    .status.error {
-                        background-color: var(--vscode-inputValidation-errorBackground);
-                        border: 1px solid var(--vscode-inputValidation-errorBorder);
+                    h2 {
+                        margin-top: 0;
+                        margin-bottom: 20px;
+                        color: var(--vscode-titleBar-activeForeground);
                     }
                     
-                    .compiler-info {
-                        background-color: var(--vscode-badge-background);
-                        color: var(--vscode-badge-foreground);
-                        padding: 8px 12px;
-                        border-radius: 2px;
-                        margin: 10px 0;
-                        font-size: 0.9em;
+                    .compiler-option {
+                        display: flex;
+                        align-items: center;
+                        margin: 5px 0;
+                        padding: 5px;
                     }
                     
-                    .hidden {
-                        display: none;
+                    .compiler-radio {
+                        margin-right: 10px;
+                    }
+                    
+                    .compiler-details {
+                        flex: 1;
+                    }
+                    
+                    .compiler-name {
+                        font-weight: bold;
+                    }
+                    
+                    .compiler-path {
+                        font-size: 0.85em;
+                        color: var(--vscode-descriptionForeground);
+                    }
+                    
+                    .detect-button {
+                        margin-bottom: 15px;
                     }
                 </style>
             </head>
             <body>
                 <h2>C++ Assembly Viewer Settings</h2>
                 
+                <div id="status" class="status"></div>
+                
                 <div class="setting-group">
-                    <div class="setting-title">Compiler Configuration</div>
-                    
-                    <div id="compilerStatus" class="status hidden"></div>
+                    <div class="setting-title">Compiler Selection</div>
                     
                     <div>
-                        <label for="compilerPath">Compiler Path:</label>
-                        <input type="text" id="compilerPath" placeholder="Auto-detected if empty">
-                        <div class="info">
-                            Leave empty for auto-detection. For MSVC, this should point to cl.exe
+                        <button onclick="detectCompilers()" class="detect-button">Detect Compilers</button>
+                        
+                        <div id="compilersList"></div>
+                        
+                        <div style="margin-top: 15px;">
+                            <label for="compilerPath">Manual Compiler Path (optional):</label>
+                            <input type="text" id="compilerPath" placeholder="C:\\Path\\To\\Compiler\\cl.exe or g++" />
+                            <div class="info">
+                                Leave empty to use auto-detected compiler or select from detected compilers above.
+                            </div>
                         </div>
-                    </div>
-                    
-                    <div class="button-group">
-                        <button onclick="detectCompiler()">Auto-detect Compiler</button>
-                        <button onclick="browseCompiler()" class="secondary">Browse...</button>
-                    </div>
-                    
-                    <div id="currentCompilerInfo" class="compiler-info hidden">
-                        <strong>Current Compiler:</strong>
-                        <div id="compilerDetails"></div>
                     </div>
                 </div>
                 
@@ -322,106 +334,115 @@ export class SettingsPanel {
                         <label for="compilerArgs">Compiler Arguments:</label>
                         <textarea id="compilerArgs" placeholder="Enter compiler arguments"></textarea>
                         <div class="info">
-                            Default arguments for compilation. For MSVC: /Od /FA /c
-                        </div>
-                    </div>
-                    
-                    <div class="button-group">
-                        <button onclick="resetArgsToDefault()" class="secondary">Reset to Default</button>
-                    </div>
-                </div>
-                
-                <div class="setting-group">
-                    <div class="setting-title">Output Format</div>
-                    
-                    <div>
-                        <label for="outputType">Assembly Output Type:</label>
-                        <select id="outputType">
-                            <option value="asm">Assembly only</option>
-                            <option value="asm+hex">Assembly + Machine Code</option>
-                            <option value="asm+hex+addr">Assembly + Machine Code + Addresses</option>
-                        </select>
-                        <div class="info">
-                            Default arguments for compilation. For MSVC: /Od /c /Zi<br>
-                            <strong>Note:</strong> /FA flags are added automatically based on output type
+                            Default: /Od /FAcs /c /EHsc<br>
+                            • <strong>/Od</strong> - disable optimizations<br>
+                            • <strong>/FAcs</strong> - generate assembly with machine code and addresses<br>
+                            • <strong>/c</strong> - compile only (no linking)<br>
+                            • <strong>/EHsc</strong> - C++ exceptions
                         </div>
                     </div>
                 </div>
                 
                 <div class="button-group">
                     <button onclick="saveSettings()">Save Settings</button>
-                    <button onclick="resetToDefault()" class="secondary">Reset All to Default</button>
+                    <button onclick="resetToDefault()">Reset to Default</button>
                 </div>
                 
                 <script>
                     const vscode = acquireVsCodeApi();
-                    
-                    let currentSettings = {};
+                    let availableCompilers = [];
                     
                     // Обработчики сообщений от расширения
                     window.addEventListener('message', event => {
                         const message = event.data;
                         
-                        switch (message.type) {
-                            case 'currentSettings':
-                                currentSettings = message.settings;
-                                updateUIWithSettings(message.settings);
-                                break;
-                                
-                            case 'compilerDetected':
-                                showStatus('Compiler detected successfully: ' + message.compiler.path, 'success');
-                                updateCompilerInfo(message.compiler);
-                                break;
-                                
-                            case 'compilerDetectionFailed':
-                                showStatus('No compiler detected automatically. Please configure manually.', 'error');
-                                break;
+                        if (message.type === 'currentSettings') {
+                            updateUIWithSettings(message.settings);
+                        }
+                        
+                        if (message.type === 'availableCompilers') {
+                            availableCompilers = message.compilers || [];
+                            updateCompilersList();
                         }
                     });
                     
                     function updateUIWithSettings(settings) {
-                        // Обновляем поля формы
+                        console.log('Updating UI with settings:', settings);
+                        document.getElementById('compilerArgs').value = settings.compilerArgs || '/Od /FAcs /c /EHsc';
                         document.getElementById('compilerPath').value = settings.compilerPath || '';
-                        document.getElementById('compilerArgs').value = settings.compilerArgs || '/Od /FA /c';
-                        document.getElementById('outputType').value = settings.outputType || 'asm';
                         
-                        // Обновляем информацию о компиляторе
-                        if (settings.currentCompiler) {
-                            updateCompilerInfo(settings.currentCompiler);
+                        // Устанавливаем выбранный компилятор
+                        if (settings.selectedCompiler) {
+                            const radios = document.querySelectorAll('input[name="compiler"]');
+                            for (const radio of radios) {
+                                if (radio.value === settings.selectedCompiler) {
+                                    radio.checked = true;
+                                    break;
+                                }
+                            }
                         }
                     }
                     
-                    function updateCompilerInfo(compiler) {
-                        const compilerInfo = document.getElementById('currentCompilerInfo');
-                        const compilerDetails = document.getElementById('compilerDetails');
+                    function updateCompilersList() {
+                        const compilersList = document.getElementById('compilersList');
                         
-                        compilerDetails.innerHTML = \`
-                            <div>Path: \${compiler.path}</div>
-                            <div>Version: \${compiler.version}</div>
-                            <div>Type: \${compiler.type}</div>
-                        \`;
+                        if (availableCompilers.length === 0) {
+                            compilersList.innerHTML = '<div class="info">No compilers detected. Please install a C++ compiler (MSVC, GCC, or Clang).</div>';
+                            return;
+                        }
                         
-                        compilerInfo.classList.remove('hidden');
+                        let html = '<div style="margin-bottom: 10px;">Detected compilers:</div>';
+                        
+                        availableCompilers.forEach((compiler, index) => {
+                            const compilerId = 'compiler_' + index;
+                            html += \`
+                                <div class="compiler-option">
+                                    <input type="radio" 
+                                           id="\${compilerId}" 
+                                           name="compiler" 
+                                           value="\${compiler.type}" 
+                                           class="compiler-radio"
+                                           data-path="\${compiler.path}">
+                                    <label for="\${compilerId}" class="compiler-details">
+                                        <div class="compiler-name">\${compiler.displayName}</div>
+                                    </label>
+                                </div>
+                            \`;
+                        });
+                        
+                        html += '<div class="info" style="margin-top: 10px;">Select a compiler to use for assembly generation.</div>';
+                        
+                        compilersList.innerHTML = html;
+                    }
+                    
+                    function detectCompilers() {
+                        vscode.postMessage({
+                            type: 'detectCompilers'
+                        });
+                        showStatus('Detecting compilers...', 'success');
                     }
                     
                     function showStatus(message, type) {
-                        const statusElement = document.getElementById('compilerStatus');
+                        const statusElement = document.getElementById('status');
                         statusElement.textContent = message;
-                        statusElement.className = 'status ' + type;
-                        statusElement.classList.remove('hidden');
+                        statusElement.className = 'status ' + type + ' show';
                         
-                        // Автоматически скрываем через 5 секунд
                         setTimeout(() => {
-                            statusElement.classList.add('hidden');
-                        }, 5000);
+                            statusElement.className = 'status';
+                        }, 3000);
                     }
                     
                     function saveSettings() {
+                        const selectedCompilerRadio = document.querySelector('input[name="compiler"]:checked');
+                        const selectedCompiler = selectedCompilerRadio ? selectedCompilerRadio.value : '';
+                        
                         const settings = {
-                            compilerPath: document.getElementById('compilerPath').value,
-                            compilerArgs: document.getElementById('compilerArgs').value,
-                            outputType: document.getElementById('outputType').value
+                            compilerArgs: document.getElementById('compilerArgs').value.trim(),
+                            selectedCompiler: selectedCompiler,
+                            compilerPath: document.getElementById('compilerPath').value.trim()
                         };
+                        
+                        console.log('Saving settings:', settings);
                         
                         vscode.postMessage({
                             type: 'updateSettings',
@@ -431,32 +452,25 @@ export class SettingsPanel {
                         showStatus('Settings saved successfully', 'success');
                     }
                     
-                    function detectCompiler() {
-                        vscode.postMessage({
-                            type: 'detectCompiler'
-                        });
-                        showStatus('Detecting compiler...', 'success');
-                    }
-                    
-                    function resetArgsToDefault() {
-                        document.getElementById('compilerArgs').value = '/Od /c /Zi';
-                        showStatus('Arguments reset to default', 'success');
-                    }
-                    
                     function resetToDefault() {
-                        vscode.postMessage({
-                            type: 'resetToDefault'
-                        });
-                    }
-                    
-                    function browseCompiler() {
-                        // В реальной реализации здесь можно добавить диалог выбора файла
-                        showStatus('File browser would open here in full implementation', 'success');
+                        const defaultSettings = {
+                            compilerArgs: '/Od /FAcs /c /EHsc',
+                            selectedCompiler: '',
+                            compilerPath: ''
+                        };
+                        
+                        updateUIWithSettings(defaultSettings);
+                        showStatus('Reset to default values', 'success');
                     }
                     
                     // Запрашиваем текущие настройки при загрузке
                     vscode.postMessage({
                         type: 'getCurrentSettings'
+                    });
+                    
+                    // Автоматически детектим компиляторы при загрузке
+                    vscode.postMessage({
+                        type: 'detectCompilers'
                     });
                 </script>
             </body>
