@@ -178,7 +178,7 @@ class AssemblyViewer2 {
         if (mapping && mapping.assemblyLines.length > 0) {
             const targetLine = mapping.assemblyLines[0] - 1;
             this.scrollToLine(this.assemblyEditor, targetLine);
-            console.log(`Scrolling assembly to line ${targetLine + 1}`);
+            console.log(`Scrolling assembly to line ${targetLine + 1} for source line ${sourceLine}`);
         }
         else {
             console.log(`No mapping found for source line ${sourceLine}`);
@@ -191,7 +191,7 @@ class AssemblyViewer2 {
         if (mapping) {
             const targetLine = mapping.sourceLine - 1;
             this.scrollToLine(this.sourceEditor, targetLine);
-            console.log(`Scrolling source to line ${targetLine + 1}`);
+            console.log(`Scrolling source to line ${targetLine + 1} for assembly line ${assemblyLine}`);
         }
         else {
             console.log(`No mapping found for assembly line ${assemblyLine}`);
@@ -214,9 +214,20 @@ class AssemblyViewer2 {
     highlightCorrespondingAssembly(sourceLine) {
         const mapping = this.findMappingBySourceLine(sourceLine);
         if (mapping && this.assemblyEditor) {
+            console.log(`Highlighting assembly for source line ${sourceLine}: ${mapping.assemblyLines.length} lines`);
+            // Показываем первые несколько инструкций для отладки
+            for (let i = 0; i < Math.min(3, mapping.assemblyLines.length); i++) {
+                const lineNum = mapping.assemblyLines[i];
+                if (lineNum - 1 < this.assemblyEditor.document.lineCount) {
+                    const lineText = this.assemblyEditor.document.lineAt(lineNum - 1).text;
+                    console.log(`  Line ${lineNum}: ${lineText.substring(0, 100)}`);
+                }
+            }
             this.createTemporaryHighlight(this.assemblyEditor, mapping.assemblyLines, mapping.color);
             this.lastHighlightedAssemblyLines = mapping.assemblyLines;
-            console.log(`Highlighting assembly lines: ${mapping.assemblyLines.join(', ')}`);
+        }
+        else {
+            console.log(`No mapping found for source line ${sourceLine}`);
         }
     }
     highlightCorrespondingSource(assemblyLine) {
@@ -260,10 +271,49 @@ class AssemblyViewer2 {
         this.lastHighlightedAssemblyLines = [];
     }
     findMappingBySourceLine(sourceLine) {
-        return this.currentMappings.find(mapping => mapping.sourceLine === sourceLine);
+        // Ищем точное совпадение
+        const exactMatch = this.currentMappings.find(mapping => mapping.sourceLine === sourceLine);
+        if (exactMatch) {
+            console.log(`Found exact mapping for line ${sourceLine} with ${exactMatch.assemblyLines.length} asm lines`);
+            return exactMatch;
+        }
+        // Если нет точного совпадения, ищем ближайшую строку
+        console.log(`No exact mapping for line ${sourceLine}, searching nearby...`);
+        let closestMapping;
+        let minDistance = Infinity;
+        for (const mapping of this.currentMappings) {
+            const distance = Math.abs(mapping.sourceLine - sourceLine);
+            if (distance < minDistance && distance <= 10) {
+                minDistance = distance;
+                closestMapping = mapping;
+            }
+        }
+        if (closestMapping) {
+            console.log(`Found nearby mapping: line ${closestMapping.sourceLine} (distance: ${minDistance})`);
+        }
+        return closestMapping;
     }
     findMappingByAssemblyLine(assemblyLine) {
-        return this.currentMappings.find(mapping => mapping.assemblyLines.includes(assemblyLine));
+        // Ищем точное совпадение
+        for (const mapping of this.currentMappings) {
+            if (mapping.assemblyLines.includes(assemblyLine)) {
+                return mapping;
+            }
+        }
+        // Если нет точного совпадения, ищем ближайшую строку ассемблера
+        // (в пределах 10 строк)
+        let closestMapping;
+        let minDistance = Infinity;
+        for (const mapping of this.currentMappings) {
+            for (const asmLine of mapping.assemblyLines) {
+                const distance = Math.abs(asmLine - assemblyLine);
+                if (distance < minDistance && distance <= 10) {
+                    minDistance = distance;
+                    closestMapping = mapping;
+                }
+            }
+        }
+        return closestMapping;
     }
     dispose() {
         console.log('Disposing AssemblyViewer resources');

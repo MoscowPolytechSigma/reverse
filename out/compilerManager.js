@@ -409,10 +409,17 @@ class CompilerManager {
         const lines = assembly.split('\n');
         const realLines = [];
         for (const line of lines) {
-            if (line.trim().startsWith('include')) {
+            const trimmedLine = line.trim();
+            // Пропускаем директивы include
+            if (trimmedLine.startsWith('include')) {
                 continue;
             }
-            if (line.trim().startsWith('INCLUDELIB')) {
+            // Пропускаем INCLUDELIB
+            if (trimmedLine.startsWith('INCLUDELIB')) {
+                continue;
+            }
+            // Пропускаем пустые строки в начале
+            if (realLines.length === 0 && trimmedLine === '') {
                 continue;
             }
             realLines.push(line);
@@ -518,7 +525,6 @@ class CompilerManager {
         return args;
     }
     parseMappings(assembly, sourcePath) {
-        // ... существующий код parseMappings ...
         const mappings = [];
         const lines = assembly.split('\n');
         const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F'];
@@ -526,55 +532,122 @@ class CompilerManager {
         let currentSourceLine = -1;
         let assemblyLines = [];
         let colorIndex = 0;
+        // Получаем имя нашего исходного файла
+        const sourceFileName = path.basename(sourcePath);
+        console.log('Source file name for filtering:', sourceFileName);
+        // Текущий файл в комментариях
+        let currentFileInComments = null;
+        let isInOurFile = false;
+        // Паттерны
+        const filePattern = /;\s*File\s+(.+)/i;
+        const linePattern = /;\s*Line\s+(\d+)/i;
+        const lineColonPattern = /;\s*(\d+)\s*:/;
+        const lineWithPipePattern = /;\s*(\d+)\s+\|/;
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
-            const sourceLineMatch = line.match(/;\s*(\d+)\s*:/);
-            if (sourceLineMatch) {
-                const lineNumber = parseInt(sourceLineMatch[1]);
+            const trimmedLine = line.trim();
+            // 1. Проверяем указание файла
+            const fileMatch = trimmedLine.match(filePattern);
+            if (fileMatch) {
+                const fileInComment = fileMatch[1];
+                currentFileInComments = fileInComment;
+                // Проверяем, относится ли это к нашему файлу
+                isInOurFile = fileInComment.includes(sourceFileName) ||
+                    fileInComment.toLowerCase().includes(path.basename(sourcePath, path.extname(sourcePath)).toLowerCase());
+                console.log(`Found file directive: ${fileInComment}, is our file: ${isInOurFile}`);
+                // Если переключаемся на другой файл, сохраняем предыдущее маппинг
+                if (!isInOurFile && currentSourceLine > 0 && assemblyLines.length > 0) {
+                    console.log(`Switching away from our file, saving previous mapping for line ${currentSourceLine}`);
+                    // НЕ сохраняем маппинг для чужого файла
+                    currentSourceLine = -1;
+                    assemblyLines = [];
+                }
+                continue;
+            }
+            // 2. Если мы не в нашем файле, пропускаем обработку строк
+            if (currentFileInComments && !isInOurFile) {
+                continue;
+            }
+            // 3. Ищем указание номера строки исходного кода
+            let sourceLineMatch = null;
+            let lineNumber = -1;
+            // Проверяем все возможные форматы
+            const lineMatch = trimmedLine.match(linePattern);
+            const colonMatch = trimmedLine.match(lineColonPattern);
+            const pipeMatch = trimmedLine.match(lineWithPipePattern);
+            if (lineMatch) {
+                sourceLineMatch = lineMatch;
+                lineNumber = parseInt(lineMatch[1]);
+            }
+            else if (colonMatch) {
+                sourceLineMatch = colonMatch;
+                lineNumber = parseInt(colonMatch[1]);
+            }
+            else if (pipeMatch) {
+                sourceLineMatch = pipeMatch;
+                lineNumber = parseInt(pipeMatch[1]);
+            }
+            if (sourceLineMatch && lineNumber > 0) {
+                // Сохраняем предыдущее маппинг
                 if (currentSourceLine > 0 && assemblyLines.length > 0) {
                     mappings.push({
                         sourceLine: currentSourceLine,
                         assemblyLines: [...assemblyLines],
                         color: colors[colorIndex % colors.length]
                     });
-                    console.log(`Mapping: source ${currentSourceLine} -> assembly lines ${assemblyLines.join(',')}`);
+                    console.log(`Mapping saved: source ${currentSourceLine} -> assembly lines ${assemblyLines.join(',')}`);
                     colorIndex++;
                 }
                 currentSourceLine = lineNumber;
-                assemblyLines = [i + 1];
-                console.log(`Found source line ${lineNumber} at assembly line ${i + 1}`);
+                assemblyLines = [i + 1]; // Текущая строка с комментарием
+                if (currentFileInComments) {
+                    console.log(`Found source line ${lineNumber} (our file) at assembly line ${i + 1}`);
+                }
+                else {
+                    console.log(`Found source line ${lineNumber} (unknown file) at assembly line ${i + 1}: "${line.substring(0, 80)}"`);
+                }
             }
-            else if (line.match(/\.LINE\s+(\d+)/i)) {
-                const lineMatch = line.match(/\.LINE\s+(\d+)/i);
-                if (lineMatch) {
-                    const lineNumber = parseInt(lineMatch[1]);
-                    if (currentSourceLine > 0 && assemblyLines.length > 0) {
+            else if (currentSourceLine > 0) {
+                // Если мы в процессе сбора ассемблерных строк для текущей строки исходного кода
+                // Определяем, является ли строка ассемблерной инструкцией
+                const isAssemblyInstruction = this.isAssemblyInstruction(trimmedLine);
+                if (isAssemblyInstruction) {
+                    // Проверяем, не слишком ли много строк мы собрали
+                    if (assemblyLines.length < 50) { // Разумный лимит
+                        assemblyLines.push(i + 1);
+                    }
+                }
+                else if (trimmedLine.startsWith(';') || trimmedLine === '') {
+                    // Комментарии или пустые строки - продолжаем сбор
+                    continue;
+                }
+                else {
+                    // Если встретили что-то другое (метку, директиву), возможно это конец блока
+                    // но для простоты также добавляем
+                    if (assemblyLines.length < 50) {
+                        assemblyLines.push(i + 1);
+                    }
+                }
+                // Проверяем конец блока - если встретили ret или новое указание файла/строки
+                if (trimmedLine === 'ret' || trimmedLine.startsWith('ret ') ||
+                    trimmedLine.startsWith('; File') || trimmedLine.startsWith('; Line') ||
+                    (i < lines.length - 1 && this.hasLineDirective(lines[i + 1]))) {
+                    // Завершаем текущее маппинг
+                    if (assemblyLines.length > 0) {
                         mappings.push({
                             sourceLine: currentSourceLine,
                             assemblyLines: [...assemblyLines],
                             color: colors[colorIndex % colors.length]
                         });
-                        console.log(`Mapping from .LINE: source ${currentSourceLine} -> assembly lines ${assemblyLines.join(',')}`);
+                        console.log(`Block ended: source ${currentSourceLine} -> ${assemblyLines.length} assembly lines`);
                         colorIndex++;
+                        currentSourceLine = -1;
+                        assemblyLines = [];
                     }
-                    currentSourceLine = lineNumber;
-                    assemblyLines = [i + 1];
-                    console.log(`Found .LINE directive: source ${lineNumber} at assembly line ${i + 1}`);
-                }
-            }
-            else if (currentSourceLine > 0) {
-                const isAssemblyInstruction = line.length > 0 &&
-                    !line.trim().startsWith(';') &&
-                    !line.trim().startsWith('.') &&
-                    !line.trim().startsWith('#') &&
-                    !line.includes('ORG') &&
-                    !line.includes('ALIGN') &&
-                    (line.includes('\t') || line.includes(' ') || /^[0-9A-F]+\s+[0-9A-F]/.test(line));
-                if (isAssemblyInstruction) {
-                    assemblyLines.push(i + 1);
                 }
             }
         }
+        // Добавляем последнее маппинг, если оно есть
         if (currentSourceLine > 0 && assemblyLines.length > 0) {
             mappings.push({
                 sourceLine: currentSourceLine,
@@ -583,22 +656,79 @@ class CompilerManager {
             });
             console.log(`Final mapping: source ${currentSourceLine} -> assembly lines ${assemblyLines.join(',')}`);
         }
-        console.log(`Total mappings found: ${mappings.length}`);
-        if (mappings.length === 0) {
-            console.log('No mappings found in actual assembly');
-            let hasRealAssembly = false;
-            for (const line of lines) {
-                if (line.includes('PROC') || line.includes('mov') || line.includes('push') || line.includes('call')) {
-                    hasRealAssembly = true;
-                    console.log('Found real assembly instruction:', line.substring(0, 100));
-                    break;
+        // Фильтруем маппинги - убираем те, у которых слишком мало или слишком много ассемблерных строк
+        // (это могут быть ложные срабатывания или заголовки функций)
+        const filteredMappings = mappings.filter(m => {
+            // От 1 до 30 ассемблерных строк - разумный диапазон для одной строки C++
+            return m.assemblyLines.length >= 1 && m.assemblyLines.length <= 30;
+        });
+        console.log(`Total mappings: ${mappings.length}, after filtering: ${filteredMappings.length}`);
+        // Выводим примеры для отладки
+        if (filteredMappings.length > 0) {
+            console.log('Sample mappings:');
+            for (let i = 0; i < Math.min(5, filteredMappings.length); i++) {
+                const m = filteredMappings[i];
+                const sampleLines = m.assemblyLines.slice(0, 3);
+                console.log(`  Source line ${m.sourceLine} -> Assembly lines: ${sampleLines.join(', ')}${m.assemblyLines.length > 3 ? '...' : ''}`);
+            }
+        }
+        else {
+            console.log('No valid mappings found, checking first 100 lines for patterns:');
+            for (let i = 0; i < Math.min(100, lines.length); i++) {
+                const line = lines[i];
+                if (line.includes(';') && (line.includes('File') || line.includes('Line') || /\d+\s*:/.test(line))) {
+                    console.log(`  Line ${i + 1}: "${line.substring(0, 100)}"`);
                 }
             }
-            if (!hasRealAssembly) {
-                console.log('WARNING: No real assembly code found in output!');
-            }
-            return this.createTestMappings(lines.length);
+            // Создаем тестовые маппинги для демонстрации
+            return this.createFallbackMappings(lines.length);
         }
+        return filteredMappings;
+    }
+    isAssemblyInstruction(line) {
+        const trimmed = line.trim();
+        if (trimmed.length === 0 || trimmed.startsWith(';') || trimmed.startsWith('#')) {
+            return false;
+        }
+        // Проверяем, является ли строка ассемблерной инструкцией
+        // Инструкция обычно: [адрес] [машинный код] [инструкция] [операнды]
+        const patterns = [
+            /^[0-9A-F]+\s+[0-9A-F]+\s+/,
+            /^\t[a-z]+\s+/i,
+            /^[a-z]+\s+[a-z0-9]+,/i,
+            /^(mov|add|sub|lea|push|pop|call|jmp|je|jne|jg|jl|inc|dec|xor|and|or|test|cmp)\s+/i,
+        ];
+        return patterns.some(pattern => pattern.test(trimmed));
+    }
+    hasLineDirective(line) {
+        const trimmed = line.trim();
+        return /;\s*Line\s+\d+/i.test(trimmed) || /;\s*\d+\s*:/.test(trimmed) || /;\s*\d+\s+\|/.test(trimmed);
+    }
+    createFallbackMappings(assemblyLineCount) {
+        const mappings = [];
+        const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4'];
+        // Создаем простые маппинги для демонстрации
+        const sourceLines = 20;
+        for (let sourceLine = 1; sourceLine <= sourceLines; sourceLine++) {
+            const assemblyLines = [];
+            const startLine = 50 + (sourceLine * 3); // Начинаем с некоторого смещения
+            // Каждой строке исходного кода сопоставляем 2-4 строки ассемблера
+            const lineCount = 2 + (sourceLine % 3);
+            for (let j = 0; j < lineCount; j++) {
+                const asmLine = startLine + j;
+                if (asmLine > 0 && asmLine <= assemblyLineCount) {
+                    assemblyLines.push(asmLine);
+                }
+            }
+            if (assemblyLines.length > 0) {
+                mappings.push({
+                    sourceLine: sourceLine,
+                    assemblyLines: assemblyLines,
+                    color: colors[sourceLine % colors.length]
+                });
+            }
+        }
+        console.log(`Created ${mappings.length} fallback mappings for demonstration`);
         return mappings;
     }
     fixEncoding(text) {
@@ -613,23 +743,34 @@ class CompilerManager {
     createTestMappings(assemblyLineCount) {
         const mappings = [];
         const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4'];
-        for (let i = 1; i <= 10; i++) {
+        // Создаем тестовые маппинги только если есть достаточно строк ассемблера
+        if (assemblyLineCount < 10) {
+            console.log('Not enough assembly lines for test mappings');
+            return mappings;
+        }
+        // Предполагаем, что у нас есть примерно 20 строк исходного кода
+        // и пытаемся создать маппинг для каждой строки
+        const sourceLines = Math.min(20, Math.floor(assemblyLineCount / 10));
+        for (let sourceLine = 1; sourceLine <= sourceLines; sourceLine++) {
             const assemblyLines = [];
-            for (let j = 0; j < 3 + (i % 3); j++) {
-                const asmLine = (i * 5 + j) % assemblyLineCount;
+            const startLine = (sourceLine * 5) + 10; // Начинаем с некоторого смещения
+            // Каждой строке исходного кода сопоставляем 3-8 строк ассемблера
+            const lineCount = 3 + (sourceLine % 6);
+            for (let j = 0; j < lineCount; j++) {
+                const asmLine = startLine + j;
                 if (asmLine > 0 && asmLine <= assemblyLineCount) {
                     assemblyLines.push(asmLine);
                 }
             }
             if (assemblyLines.length > 0) {
                 mappings.push({
-                    sourceLine: i,
+                    sourceLine: sourceLine,
                     assemblyLines: assemblyLines,
-                    color: colors[i % colors.length]
+                    color: colors[sourceLine % colors.length]
                 });
             }
         }
-        console.log(`Created ${mappings.length} test mappings`);
+        console.log(`Created ${mappings.length} test mappings for lines 1-${sourceLines}`);
         return mappings;
     }
     getCurrentCompiler() {

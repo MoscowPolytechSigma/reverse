@@ -292,10 +292,35 @@ class AssemblyViewer {
         }
     }
     findMappingBySourceLine(sourceLine) {
-        return this.currentMappings.find(mapping => mapping.sourceLine === sourceLine);
+        // Сначала ищем точное совпадение
+        const exactMatch = this.currentMappings.find(mapping => mapping.sourceLine === sourceLine);
+        if (exactMatch) {
+            console.log(`Found exact mapping for source line ${sourceLine}: ${exactMatch.assemblyLines.length} asm lines`);
+            return exactMatch;
+        }
+        // Если нет точного совпадения, ищем ближайшую строку в пределах 5 строк
+        console.log(`No exact mapping for line ${sourceLine}, searching nearby...`);
+        const sortedMappings = [...this.currentMappings].sort((a, b) => Math.abs(a.sourceLine - sourceLine) - Math.abs(b.sourceLine - sourceLine));
+        for (const mapping of sortedMappings) {
+            const distance = Math.abs(mapping.sourceLine - sourceLine);
+            if (distance <= 5) {
+                console.log(`Found nearby mapping: line ${mapping.sourceLine} (distance: ${distance}) with ${mapping.assemblyLines.length} asm lines`);
+                return mapping;
+            }
+        }
+        console.log(`No mapping found for line ${sourceLine} or nearby`);
+        return undefined;
     }
     findMappingByAssemblyLine(assemblyLine) {
-        return this.currentMappings.find(mapping => mapping.assemblyLines.includes(assemblyLine));
+        // Ищем маппинг, содержащий эту строку ассемблера
+        const mapping = this.currentMappings.find(mapping => mapping.assemblyLines.includes(assemblyLine));
+        if (mapping) {
+            console.log(`Found mapping for assembly line ${assemblyLine}: source line ${mapping.sourceLine}`);
+        }
+        else {
+            console.log(`No mapping found for assembly line ${assemblyLine}`);
+        }
+        return mapping;
     }
     dispose() {
         console.log('Disposing AssemblyViewer resources');
